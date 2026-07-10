@@ -153,8 +153,8 @@ public partial class SettingsWindow : Window
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         // Commit any in-progress DataGrid edits (e.g. the Enabled checkbox).
-        RulesGrid.CommitEdit(DataGridEditingUnit.Cell, true);
-        RulesGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        RulesGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
+        RulesGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
 
         _settingsService.Settings.FilterRules = _rules.Select(Clone).ToList();
         await _settingsService.SaveAsync();

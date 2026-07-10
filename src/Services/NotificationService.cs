@@ -1,10 +1,7 @@
 using System;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows;
 using NotificationReader.Models;
-using Windows.Data.Xml.Dom;
 using Windows.UI.Notifications;
 using Windows.UI.Notifications.Management;
 
@@ -105,7 +102,7 @@ public class NotificationService : IDisposable
         });
     }
 
-    private async void OnNotificationChanged(
+    private void OnNotificationChanged(
         UserNotificationListener sender,
         UserNotificationChangedEventArgs args)
     {
@@ -121,8 +118,11 @@ public class NotificationService : IDisposable
 
         try
         {
+            // GetNotification is synchronous in the WinRT API (there is no
+            // GetNotificationAsync overload). It returns the notification for
+            // the given id, or null if it is no longer available.
             UserNotification? notification =
-                await sender.GetNotificationAsync(args.UserNotificationId);
+                sender.GetNotification(args.UserNotificationId);
 
             if (notification == null)
             {
@@ -167,43 +167,32 @@ public class NotificationService : IDisposable
     {
         try
         {
-            NotificationBinding? binding =
-                notification.Notification?.Visual?.GetBinding(KnownNotificationBindings.ToastGeneric);
+            NotificationVisual? visual = notification.Notification?.Visual;
+            if (visual == null)
+            {
+                return string.Empty;
+            }
 
-            // Prefer the parsed binding text elements when available.
+            // Prefer the standard ToastGeneric binding; fall back to the first
+            // available binding if the toast uses a different template. The
+            // WinRT Notification type does not expose the raw XML, so all text
+            // is read through the visual bindings' text elements.
+            NotificationBinding? binding =
+                visual.GetBinding(KnownNotificationBindings.ToastGeneric);
+
+            if (binding == null && visual.Bindings != null && visual.Bindings.Count > 0)
+            {
+                binding = visual.Bindings[0];
+            }
+
             if (binding != null)
             {
-                var texts = binding.GetTextElements();
-                var parts = texts
+                var parts = binding.GetTextElements()
                     .Select(t => t.Text)
                     .Where(s => !string.IsNullOrWhiteSpace(s))
                     .Select(s => s.Trim());
-                string joined = string.Join(". ", parts);
-                if (!string.IsNullOrWhiteSpace(joined))
-                {
-                    return joined;
-                }
-            }
 
-            // Fallback: query all <text> elements from the raw XML content.
-            XmlDocument? content = notification.Notification?.Content;
-            if (content != null)
-            {
-                var nodes = content.GetElementsByTagName("text");
-                var sb = new StringBuilder();
-                for (uint i = 0; i < nodes.Length; i++)
-                {
-                    string? value = nodes.Item(i)?.InnerText;
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        if (sb.Length > 0)
-                        {
-                            sb.Append(". ");
-                        }
-                        sb.Append(value.Trim());
-                    }
-                }
-                return sb.ToString();
+                return string.Join(". ", parts);
             }
         }
         catch (Exception ex)
