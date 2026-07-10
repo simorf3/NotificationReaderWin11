@@ -1,0 +1,56 @@
+<Window x:Class="NotificationReader.Windows.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Notification Reader – Filters &amp; Settings"
+        Height="500" Width="700"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False"
+        ResizeMode="CanMinimize"
+        SizeToContent="Manual">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Filter rules decide which notifications are read aloud. If you add any Include rules, only matching notifications are spoken. Exclude rules always win."
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,10"
+                   Foreground="#444"/>
+
+        <DataGrid Grid.Row="1"
+                  x:Name="RulesGrid"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  SelectionMode="Single"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  IsReadOnly="False">
+            <DataGrid.Columns>
+                <DataGridCheckBoxColumn Header="Enabled"
+                                        Binding="{Binding IsEnabled, UpdateSourceTrigger=PropertyChanged}"
+                                        Width="70"/>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="150" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Pattern" Binding="{Binding Pattern}" Width="*" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Target" Binding="{Binding Target}" Width="90" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Action" Binding="{Binding Action}" Width="90" IsReadOnly="True"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <StackPanel Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <Button x:Name="AddButton" Content="Add" Width="80" Margin="4,0" Click="AddButton_Click"/>
+            <Button x:Name="EditButton" Content="Edit" Width="80" Margin="4,0" Click="EditButton_Click"/>
+            <Button x:Name="DeleteButton" Content="Delete" Width="80" Margin="4,0" Click="DeleteButton_Click"/>
+            <Button x:Name="TestButton" Content="Test Pattern..." Width="110" Margin="4,0" Click="TestButton_Click"/>
+            <Separator Width="12" Visibility="Hidden"/>
+            <Button x:Name="SaveButton" Content="Save" Width="80" Margin="4,0" Click="SaveButton_Click" IsDefault="True"/>
+            <Button x:Name="CancelButton" Content="Cancel" Width="80" Margin="4,0" Click="CancelButton_Click" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
