@@ -33,8 +33,10 @@ MinVersion=10.0.22000
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-; Include the MSIX package (adjust path if build output differs)
-Source: "packaging\AppPackages\*\*.msix"; DestDir: "{tmp}"; Flags: ignoreversion recursesubdirs
+; Include the MSIX package. The CI "Stage MSIX for installer" step copies the
+; built package here to a stable, predictable location regardless of the exact
+; AppPackages sub-folder layout produced by MSBuild.
+Source: "dist\*.msix"; DestDir: "{tmp}"; Flags: ignoreversion recursesubdirs
 ; Include the certificate
 Source: "NotificationReader.cer"; DestDir: "{tmp}"; Flags: ignoreversion
 ; Include helper PowerShell scripts
