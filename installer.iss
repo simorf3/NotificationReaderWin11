@@ -43,21 +43,31 @@ Source: "NotificationReader.cer"; DestDir: "{tmp}"; Flags: ignoreversion
 Source: "installer_scripts\install_cert.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
 Source: "installer_scripts\install_msix.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
 Source: "installer_scripts\uninstall_msix.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
+Source: "installer_scripts\create_shortcut.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
+Source: "installer_scripts\launch_app.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
 
-[Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "shell:AppsFolder\com.notificationreader.app_8wekyb3d8bbwe!App"; WorkingDir: "{app}"
+; Note: The Start Menu shortcut is created after install by the
+; create_shortcut.ps1 helper, which looks up the package's REAL family name
+; (the publisher hash depends on the signing certificate, so it cannot be
+; hardcoded here).
 
 [Run]
 ; Install the certificate to TrustedPeople
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\install_cert.ps1"" ""{tmp}\NotificationReader.cer"""; StatusMsg: "Installing security certificate..."; Flags: runhidden waituntilterminated
 ; Install the MSIX package (finds the .msix file in temp directory)
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""$msix = Get-ChildItem -Path '{tmp}' -Filter *.msix -Recurse | Select-Object -First 1; if ($msix) {{ Add-AppxPackage -Path $msix.FullName }} else {{ Write-Error 'MSIX not found' }}"""; StatusMsg: "Installing Notification Reader..."; Flags: runhidden waituntilterminated
-; Show completion message
-Filename: "{cmd}"; Parameters: "/c echo Installation complete! Notification Reader will appear in your system tray. && pause"; StatusMsg: "Installation complete"; Flags: postinstall skipifsilent nowait
+; Create a working Start Menu shortcut using the real package family name
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\create_shortcut.ps1"""; StatusMsg: "Creating Start Menu shortcut..."; Flags: runhidden waituntilterminated
+; Launch the app now (optional, ticked by default)
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\launch_app.ps1"""; Description: "Launch Notification Reader now"; Flags: postinstall skipifsilent nowait runhidden
 
 [UninstallRun]
 ; Uninstall the MSIX package
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\uninstall_msix.ps1"""; Flags: runhidden waituntilterminated
+
+[UninstallDelete]
+; Remove the dynamically created Start Menu shortcut
+Type: files; Name: "{commonprograms}\Notification Reader.lnk"
 
 [Code]
 function InitializeSetup(): Boolean;
