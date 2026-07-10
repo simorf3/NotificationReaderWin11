@@ -21,7 +21,10 @@ jobs:
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
-
+        
+      - name: Install Windows 11 SDK (10.0.22621) for MSIX packaging
+        run: choco install windows-sdk-11-version-22H2-all --no-progress -y
+        
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
