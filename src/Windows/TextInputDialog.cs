@@ -1,6 +1,14 @@
 using System.Windows;
 using System.Windows.Controls;
 
+// Both WPF (System.Windows.Controls) and WinForms (System.Windows.Forms) are
+// enabled in this project, so disambiguate the shared names to the WPF versions.
+using TextBox = System.Windows.Controls.TextBox;
+using Button = System.Windows.Controls.Button;
+using Orientation = System.Windows.Controls.Orientation;
+using HorizontalAlignment = System.Windows.HorizontalAlignment;
+using VerticalAlignment = System.Windows.VerticalAlignment;
+
 namespace NotificationReader.Windows;
 
 /// <summary>

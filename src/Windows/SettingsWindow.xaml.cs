@@ -8,6 +8,12 @@ using System.Windows;
 using NotificationReader.Models;
 using NotificationReader.Services;
 
+// Disambiguate WPF vs WinForms (both enabled project-wide via implicit usings).
+using MessageBox = System.Windows.MessageBox;
+using MessageBoxButton = System.Windows.MessageBoxButton;
+using MessageBoxImage = System.Windows.MessageBoxImage;
+using MessageBoxResult = System.Windows.MessageBoxResult;
+
 namespace NotificationReader.Windows;
 
 /// <summary>

@@ -4,6 +4,11 @@ using System.Windows;
 using NotificationReader.Services;
 using NotificationReader.UI;
 
+// Both WPF (System.Windows) and WinForms (System.Windows.Forms) are enabled,
+// so disambiguate the shared type names to the WPF versions used here.
+using Application = System.Windows.Application;
+using MessageBox = System.Windows.MessageBox;
+
 namespace NotificationReader;
 
 /// <summary>

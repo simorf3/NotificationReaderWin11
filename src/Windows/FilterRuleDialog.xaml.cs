@@ -4,6 +4,10 @@ using System.Windows;
 using System.Windows.Media;
 using NotificationReader.Models;
 
+// Disambiguate WPF vs WinForms (both enabled project-wide via implicit usings).
+using MessageBox = System.Windows.MessageBox;
+using Brushes = System.Windows.Media.Brushes;
+
 namespace NotificationReader.Windows;
 
 /// <summary>Modal dialog for adding or editing a single <see cref="FilterRule"/>.</summary>
