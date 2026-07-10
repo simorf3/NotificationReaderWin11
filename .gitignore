@@ -12,6 +12,7 @@ BundleArtifacts/
 # Signing artifacts produced by build.ps1
 *.pfx
 *.cer
+installer_output/
 
 # App runtime data (if ever placed here)
 *.log

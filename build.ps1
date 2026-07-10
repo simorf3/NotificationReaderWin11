@@ -197,5 +197,60 @@ if ($Install) {
     }
 }
 
+# ---------------------------------------------------------------------------
+# 7. Compile Inno Setup installer (if available)
+# ---------------------------------------------------------------------------
+Write-Section "Building Setup.exe installer"
+
+$innoSetup = $null
+$innoSearchPaths = @(
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+    "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+    "${env:ProgramFiles(x86)}\Inno Setup 5\ISCC.exe"
+    "${env:ProgramFiles}\Inno Setup 5\ISCC.exe"
+)
+
+foreach ($path in $innoSearchPaths) {
+    if (Test-Path $path) {
+        $innoSetup = $path
+        break
+    }
+}
+
+if ($innoSetup) {
+    Write-Host "Found Inno Setup: $innoSetup" -ForegroundColor Green
+    
+    $issFile = Join-Path $root "installer.iss"
+    if (Test-Path $issFile) {
+        Write-Host "Compiling installer..." -ForegroundColor Yellow
+        & $innoSetup $issFile
+        
+        if ($LASTEXITCODE -eq 0) {
+            $setupExe = Join-Path $root "installer_output\NotificationReader_Setup.exe"
+            if (Test-Path $setupExe) {
+                Write-Host ""
+                Write-Host "========================================" -ForegroundColor Green
+                Write-Host "SUCCESS! Setup.exe created:" -ForegroundColor Green
+                Write-Host "  $setupExe" -ForegroundColor Cyan
+                Write-Host "========================================" -ForegroundColor Green
+                Write-Host ""
+                Write-Host "To install: Simply run NotificationReader_Setup.exe" -ForegroundColor Yellow
+                Write-Host "The installer will:" -ForegroundColor White
+                Write-Host "  1. Install the security certificate automatically" -ForegroundColor White
+                Write-Host "  2. Install the MSIX package" -ForegroundColor White
+                Write-Host "  3. Create Start Menu shortcuts" -ForegroundColor White
+                Write-Host "  4. Prompt you to grant notification access" -ForegroundColor White
+            }
+        } else {
+            Write-Host "Inno Setup compilation failed." -ForegroundColor Red
+        }
+    } else {
+        Write-Host "installer.iss not found at $issFile" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "Inno Setup not found. Install from https://jrsoftware.org/isinfo.php to build setup.exe" -ForegroundColor Yellow
+    Write-Host "The MSIX package is ready, but you'll need to manually install the certificate." -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green

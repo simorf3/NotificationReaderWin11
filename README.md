@@ -55,8 +55,7 @@ Everything else is provided by the framework:
 
 ```powershell
 # From the repository root:
-.\build.ps1                 # build + create self-signed cert + produce MSIX
-.\build.ps1 -Install        # ...and also trust the cert + install (run elevated)
+.\build.ps1                 # build + create self-signed cert + produce setup.exe installer
 ```
 
 The script will:
@@ -64,10 +63,10 @@ The script will:
 1. Find `msbuild.exe` (via `vswhere` or `PATH`).
 2. Create/reuse a self‑signed code‑signing certificate `CN=NotificationReader`.
 3. Export it to `NotificationReader.pfx` (and a public `NotificationReader.cer`).
-4. Build the packaging project and produce an `.msix` under
-   `packaging\AppPackages\`.
-5. Print sideloading instructions.
-6. With `-Install`, import the cert into `TrustedPeople` and run `Add-AppxPackage`.
+4. Build the packaging project and produce an `.msix` under `packaging\AppPackages\`.
+5. **Compile the Inno Setup installer** to produce `NotificationReader_Setup.exe` in `installer_output\`.
+
+**Note:** To build the setup.exe installer, you need **Inno Setup** installed from https://jrsoftware.org/isinfo.php. If Inno Setup is not found, the script will still produce the MSIX package with manual installation instructions.
 
 ### Option B — Visual Studio
 
@@ -76,20 +75,24 @@ The script will:
 3. Right‑click **NotificationReader.Package** → **Set as Startup Project**.
 4. Right‑click the package project → **Publish → Create App Packages…** →
    *Sideloading* → create/select a signing certificate → **Create**.
-5. Use the generated `.msix` + `.cer` to install (see below).
-
-### Option C — manual MSBuild
-
-```powershell
-msbuild packaging\NotificationReader.Package.wapproj /t:Restore /p:Configuration=Release /p:Platform=x64
-msbuild packaging\NotificationReader.Package.wapproj /p:Configuration=Release /p:Platform=x64 ^
-    /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never ^
-    /p:AppxPackageSigningEnabled=true /p:PackageCertificateThumbprint=<THUMBPRINT>
-```
+5. Run `build.ps1` to compile the Inno Setup installer, or follow manual install steps below.
 
 ---
 
-## 4. How to install the MSIX (sideloading)
+## 4. How to install
+
+### Easy way: Use the installer (recommended)
+
+Simply **double-click `NotificationReader_Setup.exe`** and follow the wizard. The installer will:
+
+1. ✅ Automatically install the security certificate
+2. ✅ Install the application
+3. ✅ Create Start Menu shortcuts
+4. ✅ Prompt you to grant notification access
+
+**That's it!** No manual certificate steps, no PowerShell required.
+
+### Manual way: Install MSIX directly (if you didn't build the installer)
 
 1. **Enable Developer Mode / sideloading**
    `Settings > System > For developers > Developer Mode = On`.
@@ -103,8 +106,7 @@ msbuild packaging\NotificationReader.Package.wapproj /p:Configuration=Release /p
    ```
 4. Launch **Notification Reader** from the Start menu. It appears in the system tray.
 
-To uninstall: `Settings > Apps > Installed apps > Notification Reader > Uninstall`,
-or `Get-AppxPackage *notificationreader* | Remove-AppxPackage`.
+To uninstall: Use Windows Settings, or run the installer again and choose "Uninstall".
 
 ---
 
