@@ -57,6 +57,23 @@ jobs:
           /p:PackageCertificateThumbprint=$env:CERT_THUMBPRINT
           /p:GenerateAppInstallerFile=false
 
+      - name: Stage MSIX for installer
+        shell: pwsh
+        run: |
+          $msix = Get-ChildItem -Path . -Filter *.msix -Recurse -ErrorAction SilentlyContinue |
+                  Where-Object { $_.FullName -notmatch '\\Dependencies\\' } |
+                  Select-Object -First 1
+          if (-not $msix) {
+            Write-Host "No .msix found. Listing all packaging output for diagnosis:"
+            Get-ChildItem -Path packaging -Recurse -Include *.msix,*.msixbundle,*.appx -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host $_.FullName }
+            Write-Error "Build did not produce an .msix package."
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $msix.FullName (Join-Path dist $msix.Name) -Force
+          Write-Host "Staged MSIX: $($msix.FullName)"
+
       - name: Compile Setup.exe with Inno Setup
         shell: pwsh
         run: |
