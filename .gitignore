@@ -1,0 +1,17 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+AppPackages/
+BundleArtifacts/
+*.user
+*.suo
+.vs/
+
+# Signing artifacts produced by build.ps1
+*.pfx
+*.cer
+
+# App runtime data (if ever placed here)
+*.log
