@@ -145,6 +145,30 @@ public class TrayIconManager : IDisposable
             item.Click += OnVoiceClicked;
             _voiceMenu.DropDownItems.Add(item);
         }
+
+        // Let the user install more voices straight from Windows settings.
+        _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
+        var addVoices = new ToolStripMenuItem("Add more voices\u2026");
+        addVoices.Click += (_, _) => OpenSpeechSettings();
+        _voiceMenu.DropDownItems.Add(addVoices);
+    }
+
+    private static void OpenSpeechSettings()
+    {
+        try
+        {
+            // Opens Settings > Time & language > Speech, where extra TTS voices
+            // can be added (these become usable by this app).
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "ms-settings:speech",
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("Failed to open Speech settings.", ex);
+        }
     }
 
     private async void OnVoiceClicked(object? sender, EventArgs e)

@@ -54,8 +54,9 @@ Source: "installer_scripts\launch_app.ps1"; DestDir: "{tmp}"; Flags: ignoreversi
 [Run]
 ; Install the certificate to TrustedPeople
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\install_cert.ps1"" ""{tmp}\NotificationReader.cer"""; StatusMsg: "Installing security certificate..."; Flags: runhidden waituntilterminated
-; Install the MSIX package (finds the .msix file in temp directory)
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""$msix = Get-ChildItem -Path '{tmp}' -Filter *.msix -Recurse | Select-Object -First 1; if ($msix) {{ Add-AppxPackage -Path $msix.FullName }} else {{ Write-Error 'MSIX not found' }}"""; StatusMsg: "Installing Notification Reader..."; Flags: runhidden waituntilterminated
+; Install the MSIX package via the robust helper script (it locates the .msix
+; in {tmp} itself, removes any previous version, then installs).
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\install_msix.ps1"""; StatusMsg: "Installing Notification Reader..."; Flags: runhidden waituntilterminated
 ; Create a working Start Menu shortcut using the real package family name
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -File ""{tmp}\create_shortcut.ps1"""; StatusMsg: "Creating Start Menu shortcut..."; Flags: runhidden waituntilterminated
 ; Launch the app now (optional, ticked by default)
@@ -96,16 +97,37 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  Installed: Boolean;
 begin
   if CurStep = ssPostInstall then
   begin
-    // Grant notification access instructions
-    MsgBox('Installation complete!' + #13#10 + #13#10 + 
-           'Important: You need to grant notification access:' + #13#10 +
-           '1. Go to Settings > Privacy & security > Notifications' + #13#10 +
-           '2. Enable "Let apps access your notifications"' + #13#10 +
-           '3. Make sure "Notification Reader" is enabled' + #13#10 + #13#10 +
-           'Then launch Notification Reader from the Start Menu.', 
-           mbInformation, MB_OK);
+    // Verify the MSIX package actually registered. Exit code 0 = found.
+    Installed := Exec('powershell.exe',
+      '-ExecutionPolicy Bypass -Command "if (Get-AppxPackage -Name ''com.notificationreader.app'') { exit 0 } else { exit 1 }"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+
+    if Installed then
+    begin
+      MsgBox('Installation complete!' + #13#10 + #13#10 +
+             'Important: grant notification access so the app can read them:' + #13#10 +
+             '1. Go to Settings > Privacy & security > Notifications' + #13#10 +
+             '2. Enable "Let apps access your notifications"' + #13#10 +
+             '3. Make sure "Notification Reader" is enabled' + #13#10 + #13#10 +
+             'Then launch Notification Reader from the Start Menu' + #13#10 +
+             '(it lives in the system tray, next to the clock).',
+             mbInformation, MB_OK);
+    end
+    else
+    begin
+      MsgBox('Setup finished, but the Notification Reader app package did NOT '
+             + 'register correctly.' + #13#10 + #13#10 +
+             'This is usually a certificate-trust issue. Please try:' + #13#10 +
+             '1. Re-run this installer (right-click > Run as administrator), or' + #13#10 +
+             '2. Restart Windows and run it again.' + #13#10 + #13#10 +
+             'If it still fails, contact support with this message.',
+             mbError, MB_OK);
+    end;
   end;
 end;

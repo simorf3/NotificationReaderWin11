@@ -47,16 +47,27 @@ public class SpeechService : IDisposable
     {
         _synthesizer = new SpeechSynthesizer();
 
-        var all = SpeechSynthesizer.AllVoices;
-        var natural = all
-            .Where(v => NaturalVoiceFragments.Any(frag =>
-                v.DisplayName.IndexOf(frag, StringComparison.OrdinalIgnoreCase) >= 0))
+        // Expose EVERY installed voice so the user can always pick one. Natural/
+        // neural voices are sorted to the top so they are easy to find, but the
+        // full list is always shown (previously a natural-only filter could hide
+        // voices, leaving nothing selectable).
+        //
+        // Note: Windows 11 "Narrator natural" voices use a separate neural engine
+        // that Microsoft does not expose through Windows.Media.SpeechSynthesis, so
+        // they cannot appear here regardless. To add more voices usable by this
+        // app, install them via Settings > Time & language > Speech > "Add voices".
+        var all = SpeechSynthesizer.AllVoices ?? (IReadOnlyList<VoiceInformation>)Array.Empty<VoiceInformation>();
+
+        NaturalVoices = all
+            .OrderByDescending(v => IsNatural(v.DisplayName))
+            .ThenBy(v => v.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        NaturalVoices = natural.Count > 0 ? natural : all.ToList();
-
-        // Default to the first natural voice.
-        var first = NaturalVoices.FirstOrDefault();
+        // Default to the best available voice: prefer a natural one, else the
+        // synthesizer's own default, else the first in the list.
+        var first = NaturalVoices.FirstOrDefault(v => IsNatural(v.DisplayName))
+                    ?? _synthesizer.Voice
+                    ?? NaturalVoices.FirstOrDefault();
         if (first != null)
         {
             _synthesizer.Voice = first;
@@ -70,6 +81,12 @@ public class SpeechService : IDisposable
 
         return Task.CompletedTask;
     }
+
+    /// <summary>True if the display name looks like a modern natural/neural voice.</summary>
+    private static bool IsNatural(string displayName) =>
+        !string.IsNullOrEmpty(displayName) &&
+        NaturalVoiceFragments.Any(frag =>
+            displayName.IndexOf(frag, StringComparison.OrdinalIgnoreCase) >= 0);
 
     /// <summary>Selects a voice by its <see cref="VoiceInformation.Id"/>.</summary>
     public void SetVoice(string voiceId)
