@@ -1,5 +1,6 @@
 ; Inno Setup Script for Notification Reader
 ; Creates a setup.exe that installs the MSIX package with certificate handling
+; Changelog: removed create_shortcut.ps1 step (broken shell: .url) - MSIX registers its own Start Menu tile.
 
 #define MyAppName "Notification Reader"
 #define MyAppVersion "1.0.0"
@@ -8,7 +9,7 @@
 #define MyAppExeName "NotificationReader.exe"
 
 [Setup]
-AppId={{B8F3A9E1-5C2D-4B6A-8F1E-9D4C7A6B3E2F
+AppId={{B8F3A9E1-5C2D-4B6A-8F1E-9D4C7A6B3E2F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
@@ -39,15 +40,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Source: "dist\*.msix"; DestDir: "{tmp}"; Flags: ignoreversion recursesubdirs
 ; Include the certificate
 Source: "NotificationReader.cer"; DestDir: "{tmp}"; Flags: ignoreversion
-; Include helper PowerShell scripts
 Source: "installer_scripts\install_cert.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
 Source: "installer_scripts\install_msix.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
 Source: "installer_scripts\uninstall_msix.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
 Source: "installer_scripts\launch_app.ps1"; DestDir: "{tmp}"; Flags: ignoreversion
 
-; Note: A Start Menu shortcut is NOT created by this installer. The MSIX
+; Note: A custom Start Menu shortcut is NOT created by this installer. The MSIX
 ; package automatically registers its own Start Menu tile from the manifest
-; ƒuap:VisualElements>, which launches the packaged app correctly. A custom
+; <uap:VisualElements>, which launches the packaged app correctly. A custom
 ; shortcut step was removed because it could produce a broken "shell:" .url.
 
 [Run]
