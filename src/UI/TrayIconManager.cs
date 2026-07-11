@@ -113,9 +113,10 @@ public class TrayIconManager : IDisposable
         {
             Icon = LoadAppIcon(),
             Visible = true,
-            ContextMenuStrip = _menu,
             Text = BuildTooltip()
         };
+        // Left-click (or right-click) opens the menu.
+        _notifyIcon.MouseClick += OnTrayIconClick;
         _notifyIcon.DoubleClick += (_, _) => OpenSettingsWindow();
 
         // Startup balloon.
@@ -439,6 +440,24 @@ public class TrayIconManager : IDisposable
             {
                 // Leave unchecked to reflect the custom value truthfully.
             }
+        }
+    }
+
+    private void OnTrayIconClick(object? sender, MouseEventArgs e)
+    {
+        if (_menu == null || _notifyIcon == null)
+        {
+            return;
+        }
+
+        // Show menu on left-click or right-click (both are fine for a tray-only app).
+        if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right)
+        {
+            // Position the menu at the cursor; MethodInfo reflection is the standard
+            // workaround for showing a ContextMenuStrip manually.
+            var mi = typeof(NotifyIcon).GetMethod("ShowContextMenu",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            mi?.Invoke(_notifyIcon, null);
         }
     }
 
