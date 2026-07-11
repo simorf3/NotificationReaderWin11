@@ -6,7 +6,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
 using NotificationReader.Models;
 using Windows.Media.SpeechSynthesis;
 
@@ -47,8 +46,13 @@ public class SpeechService : IDisposable
     private VoiceOption? _currentVoice;
     private double _rate = 1.0;
     // Playback gain multiplier. 1.0 = source volume; >1.0 amplifies (louder).
-    private float _gain = 1.3f;
+    private float _gain = 2.0f;
     private bool _disposed;
+
+    // Voice preview (hover-to-hear) runs outside the notification queue and is
+    // cancelled whenever the user hovers a different voice or moves away.
+    private CancellationTokenSource? _previewCts;
+    private readonly object _previewLock = new();
 
     /// <summary>Master toggle mirrored from settings.</summary>
     public bool IsEnabled { get; set; } = true;
@@ -181,9 +185,12 @@ public class SpeechService : IDisposable
     public void SetVolume(int percent)
     {
         if (percent < 0) percent = 0;
-        if (percent > 200) percent = 200;
+        if (percent > MaxVolumePercent) percent = MaxVolumePercent;
         _gain = percent / 100f;
     }
+
+    /// <summary>Maximum volume percentage the slider allows (amplification headroom).</summary>
+    public const int MaxVolumePercent = 400;
 
     /// <summary>Converts the app rate (0.5-1.5) into an SSML prosody rate like "+0%".</summary>
     private string OnlineRateString()
@@ -298,7 +305,7 @@ public class SpeechService : IDisposable
             // The WinRT stream is WAV; play through NAudio so the volume slider
             // (which can amplify beyond 100%) applies to local voices too.
             using var reader = new WaveFileReader(memory);
-            PlayWithGain(reader, _gain);
+            PlayWithGain(reader, _gain, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -307,29 +314,158 @@ public class SpeechService : IDisposable
     }
 
     /// <summary>Decodes and plays an MP3 byte array synchronously (via NAudio).</summary>
-    private void PlayMp3(byte[] mp3)
+    private void PlayMp3(byte[] mp3, CancellationToken token = default)
     {
         using var ms = new MemoryStream(mp3);
         using var reader = new Mp3FileReader(ms);
-        PlayWithGain(reader, _gain);
+        PlayWithGain(reader, _gain, token);
     }
 
     /// <summary>
-    /// Plays a decoded audio stream synchronously, applying the gain multiplier
-    /// (values above 1.0 amplify, making output louder than the source).
+    /// Plays a decoded audio stream synchronously, applying the gain multiplier.
+    /// A soft-clipping limiter (tanh) is used so gains above 100% raise the
+    /// perceived loudness substantially without the harsh distortion that plain
+    /// multiplication would cause when the signal exceeds full scale.
     /// </summary>
-    private static void PlayWithGain(WaveStream reader, float gain)
+    private static void PlayWithGain(WaveStream reader, float gain, CancellationToken token)
     {
         var sampleProvider = reader.ToSampleProvider();
-        var volumeProvider = new VolumeSampleProvider(sampleProvider) { Volume = gain };
+        var loud = new LoudnessSampleProvider(sampleProvider, gain);
 
         using var output = new WaveOutEvent();
-        output.Init(volumeProvider);
+        output.Init(loud);
         output.Play();
         while (output.PlaybackState == PlaybackState.Playing)
         {
+            if (token.IsCancellationRequested)
+            {
+                try { output.Stop(); } catch { /* ignore */ }
+                break;
+            }
             Thread.Sleep(40);
         }
+    }
+
+    /// <summary>
+    /// Applies gain then a tanh soft-clip. Small/quiet samples are boosted almost
+    /// linearly; loud peaks saturate gently toward ±1.0 instead of clipping hard.
+    /// This is a simple loudness maximiser that makes speech noticeably louder.
+    /// </summary>
+    private sealed class LoudnessSampleProvider : ISampleProvider
+    {
+        private readonly ISampleProvider _source;
+        private readonly float _gain;
+
+        public LoudnessSampleProvider(ISampleProvider source, float gain)
+        {
+            _source = source;
+            _gain = gain;
+        }
+
+        public WaveFormat WaveFormat => _source.WaveFormat;
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            int read = _source.Read(buffer, offset, count);
+            for (int i = 0; i < read; i++)
+            {
+                float s = buffer[offset + i] * _gain;
+                // tanh soft-clip keeps output within [-1, 1] with a smooth knee.
+                buffer[offset + i] = (float)Math.Tanh(s);
+            }
+            return read;
+        }
+    }
+
+    /// <summary>
+    /// Plays a short spoken sample of the given voice, for the hover-to-preview
+    /// feature. Runs independently of the notification queue and never changes the
+    /// user's selected voice. A new preview cancels any in-progress one.
+    /// </summary>
+    public async Task PreviewVoiceAsync(string voiceId)
+    {
+        var voice = Voices.FirstOrDefault(v => v.Id == voiceId);
+        if (voice == null || _disposed)
+        {
+            return;
+        }
+
+        CancellationTokenSource cts;
+        lock (_previewLock)
+        {
+            try { _previewCts?.Cancel(); } catch { /* ignore */ }
+            _previewCts?.Dispose();
+            _previewCts = new CancellationTokenSource();
+            cts = _previewCts;
+        }
+        var token = cts.Token;
+
+        string cleanName = StripVoiceSuffix(voice.DisplayName);
+        string sample = $"Hello, this is {cleanName}. This is how I sound.";
+
+        try
+        {
+            if (voice is { IsOnline: true, OnlineShortName: { } shortName })
+            {
+                byte[] mp3 = await EdgeTtsService
+                    .SynthesizeAsync(sample, shortName, OnlineRateString(), cancellationToken: token)
+                    .ConfigureAwait(false);
+
+                if (mp3.Length > 0 && !token.IsCancellationRequested)
+                {
+                    await Task.Run(() => PlayMp3(mp3, token), token).ConfigureAwait(false);
+                }
+            }
+            else if (_localVoices.TryGetValue(voice.Id, out var winRtVoice))
+            {
+                // Use a throwaway synthesizer so the shared one (and the user's
+                // selected voice) is left untouched.
+                using var synth = new SpeechSynthesizer { Voice = winRtVoice };
+                try { synth.Options.SpeakingRate = Math.Clamp(_rate, 0.5, 6.0); } catch { /* ignore */ }
+
+                using SpeechSynthesisStream stream = await synth.SynthesizeTextToStreamAsync(sample);
+                using var netStream = stream.AsStreamForRead();
+                using var memory = new MemoryStream();
+                await netStream.CopyToAsync(memory, token).ConfigureAwait(false);
+                memory.Position = 0;
+
+                if (!token.IsCancellationRequested)
+                {
+                    await Task.Run(() =>
+                    {
+                        using var reader = new WaveFileReader(memory);
+                        PlayWithGain(reader, _gain, token);
+                    }, token).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* superseded by a newer preview */ }
+        catch (Exception ex)
+        {
+            Logger.Log($"Voice preview failed for '{voiceId}'.", ex);
+        }
+    }
+
+    /// <summary>Stops any in-progress voice preview.</summary>
+    public void CancelPreview()
+    {
+        lock (_previewLock)
+        {
+            try { _previewCts?.Cancel(); } catch { /* ignore */ }
+        }
+    }
+
+    /// <summary>Strips the "(offline)" / "(online)" suffixes for a clean spoken name.</summary>
+    private static string StripVoiceSuffix(string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            return "this voice";
+        }
+
+        int paren = displayName.IndexOf('(');
+        string name = paren > 0 ? displayName.Substring(0, paren) : displayName;
+        return name.Trim();
     }
 
     public void Dispose()

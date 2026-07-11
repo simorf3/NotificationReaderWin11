@@ -22,10 +22,10 @@ public class AppSettings
 
     /// <summary>
     /// Playback volume as a percentage. 100 = normal, values above 100 amplify
-    /// (louder than the source). Range 0-200. Defaults to 130 so speech is
-    /// comfortably audible out of the box.
+    /// (louder than the source, via a soft-clipping limiter). Range 0-400.
+    /// Defaults to 200 so speech is clearly audible out of the box.
     /// </summary>
-    public int Volume { get; set; } = 130;
+    public int Volume { get; set; } = 200;
 
     /// <summary>User-defined regex filter rules.</summary>
     public List<FilterRule> FilterRules { get; set; } = new();

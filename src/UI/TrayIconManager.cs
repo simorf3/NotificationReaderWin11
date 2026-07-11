@@ -36,6 +36,13 @@ public class TrayIconManager : IDisposable
     private ToolStripMenuItem? _volumeLabel;
     private TrackBar? _volumeTrackBar;
 
+    // Hover-to-preview state.
+    private System.Windows.Forms.Timer? _previewTimer;
+    private ToolStripMenuItem? _pendingPreviewItem;
+    private ToolStripMenuItem? _loadingItem;
+    private string? _loadingItemText;
+    private const int PreviewHoverDelayMs = 450;
+
     private SettingsWindow? _settingsWindow;
     private bool _disposed;
 
@@ -171,8 +178,15 @@ public class TrayIconManager : IDisposable
                 Checked = voice.Id == selected
             };
             item.Click += OnVoiceClicked;
+            // Hover to hear a short sample of the voice.
+            item.MouseEnter += OnVoiceHover;
+            item.MouseLeave += OnVoiceHoverLeave;
             _voiceMenu.DropDownItems.Add(item);
         }
+
+        // Stop any preview and clean up indicators when the menu closes.
+        _voiceMenu.DropDownClosed -= OnVoiceMenuClosed;
+        _voiceMenu.DropDownClosed += OnVoiceMenuClosed;
 
         // Let the user install more offline voices straight from Windows settings.
         _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
@@ -210,6 +224,112 @@ public class TrayIconManager : IDisposable
         _settingsService.Settings.SelectedVoiceId = voiceId;
         UpdateVoiceMenu();
         await _settingsService.SaveAsync();
+    }
+
+    // ---- Hover-to-preview ------------------------------------------------------
+
+    private void OnVoiceHover(object? sender, EventArgs e)
+    {
+        if (sender is not ToolStripMenuItem item || item.Tag is not string)
+        {
+            return;
+        }
+
+        // A different voice is now hovered: stop the previous preview and its
+        // loading indicator, then (re)start the debounce timer.
+        _speechService.CancelPreview();
+        ClearLoadingIndicator();
+        _pendingPreviewItem = item;
+
+        _previewTimer ??= CreatePreviewTimer();
+        _previewTimer.Stop();
+        _previewTimer.Start();
+    }
+
+    private void OnVoiceHoverLeave(object? sender, EventArgs e)
+    {
+        // Only cancel if we're leaving the item we were about to preview.
+        if (sender is ToolStripMenuItem item && ReferenceEquals(item, _pendingPreviewItem))
+        {
+            _pendingPreviewItem = null;
+        }
+        _previewTimer?.Stop();
+        _speechService.CancelPreview();
+        ClearLoadingIndicator();
+    }
+
+    private void OnVoiceMenuClosed(object? sender, EventArgs e)
+    {
+        _previewTimer?.Stop();
+        _pendingPreviewItem = null;
+        _speechService.CancelPreview();
+        ClearLoadingIndicator();
+    }
+
+    private System.Windows.Forms.Timer CreatePreviewTimer()
+    {
+        var timer = new System.Windows.Forms.Timer { Interval = PreviewHoverDelayMs };
+        timer.Tick += async (_, _) =>
+        {
+            timer.Stop();
+            var item = _pendingPreviewItem;
+            if (item is null || item.Tag is not string voiceId)
+            {
+                return;
+            }
+
+            ShowLoadingIndicator(item);
+            try
+            {
+                await _speechService.PreviewVoiceAsync(voiceId);
+            }
+            finally
+            {
+                // Only clear if this item is still the one showing the indicator.
+                if (ReferenceEquals(_loadingItem, item))
+                {
+                    ClearLoadingIndicator();
+                }
+            }
+        };
+        return timer;
+    }
+
+    private void ShowLoadingIndicator(ToolStripMenuItem item)
+    {
+        ClearLoadingIndicator();
+        try
+        {
+            _loadingItem = item;
+            _loadingItemText = item.Text;
+            item.Text = "\u23F3 " + _loadingItemText; // ⏳ prefix
+        }
+        catch
+        {
+            _loadingItem = null;
+            _loadingItemText = null;
+        }
+    }
+
+    private void ClearLoadingIndicator()
+    {
+        if (_loadingItem == null)
+        {
+            return;
+        }
+        try
+        {
+            if (_loadingItemText != null)
+            {
+                _loadingItem.Text = _loadingItemText;
+            }
+        }
+        catch { /* menu item may be gone */ }
+        finally
+        {
+            _loadingItem = null;
+            _loadingItemText = null;
+        }
     }
 
     /// <summary>Refreshes the check marks in the voice submenu.</summary>
@@ -252,7 +372,7 @@ public class TrayIconManager : IDisposable
 
         int vol = _settingsService.Settings.Volume;
         if (vol < 0) vol = 0;
-        if (vol > 200) vol = 200;
+        if (vol > SpeechService.MaxVolumePercent) vol = SpeechService.MaxVolumePercent;
 
         _volumeLabel = new ToolStripMenuItem($"Volume: {vol}%  (100% = normal)") { Enabled = false };
         _volumeMenu.DropDownItems.Add(_volumeLabel);
@@ -260,10 +380,10 @@ public class TrayIconManager : IDisposable
         _volumeTrackBar = new TrackBar
         {
             Minimum = 0,
-            Maximum = 200,
-            TickFrequency = 25,
-            SmallChange = 5,
-            LargeChange = 25,
+            Maximum = SpeechService.MaxVolumePercent,
+            TickFrequency = 50,
+            SmallChange = 10,
+            LargeChange = 50,
             Value = vol,
             Width = 240,
             AutoSize = false,
@@ -424,6 +544,9 @@ public class TrayIconManager : IDisposable
 
         try
         {
+            _previewTimer?.Stop();
+            _previewTimer?.Dispose();
+            _speechService.CancelPreview();
             if (_notifyIcon != null)
             {
                 _notifyIcon.Visible = false;

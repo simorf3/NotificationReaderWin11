@@ -73,11 +73,63 @@ public class NotificationService : IDisposable
 
             _listener.NotificationChanged += OnNotificationChanged;
             IsListening = true;
+
+            // Pre-populate the per-app list from notifications already sitting in
+            // Action Center, so the "Apps" tab isn't empty on first run and the
+            // user doesn't have to wait for each app to notify again.
+            await SeedKnownAppsAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Logger.Log("Failed to initialize notification listener.", ex);
             IsListening = false;
+        }
+    }
+
+    /// <summary>
+    /// Reads notifications currently in Action Center and records the apps that
+    /// posted them, so they appear in Settings &gt; Apps without waiting for a new
+    /// notification. Best-effort: any failure is logged and ignored.
+    /// </summary>
+    private async Task SeedKnownAppsAsync()
+    {
+        try
+        {
+            if (_listener == null)
+            {
+                return;
+            }
+
+            var current = await _listener.GetNotificationsAsync(NotificationKinds.Toast);
+            if (current == null)
+            {
+                return;
+            }
+
+            bool added = false;
+            foreach (var n in current)
+            {
+                string appName = string.Empty;
+                try
+                {
+                    appName = n.AppInfo?.DisplayInfo?.DisplayName ?? string.Empty;
+                }
+                catch { /* some apps expose no AppInfo */ }
+
+                if (RememberAppInternal(appName))
+                {
+                    added = true;
+                }
+            }
+
+            if (added)
+            {
+                await _settingsService.SaveAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("Failed to seed known apps from Action Center.", ex);
         }
     }
 
@@ -195,20 +247,32 @@ public class NotificationService : IDisposable
     /// </summary>
     private void RememberApp(string appName)
     {
+        if (RememberAppInternal(appName))
+        {
+            // Fire-and-forget save; failures are logged inside SaveAsync.
+            _ = _settingsService.SaveAsync();
+        }
+    }
+
+    /// <summary>
+    /// Adds an app to KnownApps if not already present. Returns true if it was a
+    /// genuinely new app (so the caller can decide when to persist).
+    /// </summary>
+    private bool RememberAppInternal(string appName)
+    {
         if (string.IsNullOrWhiteSpace(appName))
         {
-            return;
+            return false;
         }
 
         var known = _settingsService.Settings.KnownApps ??= new System.Collections.Generic.List<string>();
         if (known.Any(a => string.Equals(a, appName, StringComparison.OrdinalIgnoreCase)))
         {
-            return;
+            return false;
         }
 
         known.Add(appName);
-        // Fire-and-forget save; failures are logged inside SaveAsync.
-        _ = _settingsService.SaveAsync();
+        return true;
     }
 
     private static System.Collections.Generic.List<string> ExtractTextParts(UserNotification notification)
