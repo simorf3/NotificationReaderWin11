@@ -76,6 +76,7 @@ public partial class App : Application
                 _speechService.SetVoice(settings.SelectedVoiceId);
             }
             _speechService.SetRate(settings.SpeechRate);
+            _speechService.SetVolume(settings.Volume);
         }
         catch (Exception ex)
         {

@@ -26,6 +26,14 @@ public partial class SettingsWindow : Window
     private readonly FilterService _filterService;
 
     private readonly ObservableCollection<FilterRule> _rules = new();
+    private readonly ObservableCollection<AppToggle> _apps = new();
+
+    /// <summary>Row model for the per-app "Read aloud" list (public so WPF can bind to it).</summary>
+    public sealed class AppToggle
+    {
+        public string AppName { get; set; } = string.Empty;
+        public bool ReadAloud { get; set; } = true;
+    }
 
     public SettingsWindow(SettingsService settingsService, FilterService filterService)
     {
@@ -36,6 +44,25 @@ public partial class SettingsWindow : Window
 
         LoadRules();
         RulesGrid.ItemsSource = _rules;
+
+        LoadApps();
+        AppsGrid.ItemsSource = _apps;
+    }
+
+    private void LoadApps()
+    {
+        _apps.Clear();
+
+        var known = _settingsService.Settings.KnownApps ?? new System.Collections.Generic.List<string>();
+        var muted = _settingsService.Settings.MutedApps ?? new System.Collections.Generic.List<string>();
+
+        foreach (var app in known.Where(a => !string.IsNullOrWhiteSpace(a))
+                                  .Distinct(StringComparer.OrdinalIgnoreCase)
+                                  .OrderBy(a => a, StringComparer.OrdinalIgnoreCase))
+        {
+            bool isMuted = muted.Any(m => string.Equals(m, app, StringComparison.OrdinalIgnoreCase));
+            _apps.Add(new AppToggle { AppName = app, ReadAloud = !isMuted });
+        }
     }
 
     private void LoadRules()
@@ -152,11 +179,20 @@ public partial class SettingsWindow : Window
 
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        // Commit any in-progress DataGrid edits (e.g. the Enabled checkbox).
+        // Commit any in-progress DataGrid edits (e.g. the checkboxes).
         RulesGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
         RulesGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
+        AppsGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
+        AppsGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
 
         _settingsService.Settings.FilterRules = _rules.Select(Clone).ToList();
+
+        // Persist muted apps (those with "Read aloud" unchecked).
+        _settingsService.Settings.MutedApps = _apps
+            .Where(a => !a.ReadAloud)
+            .Select(a => a.AppName)
+            .ToList();
+
         await _settingsService.SaveAsync();
         _filterService.Reload();
 

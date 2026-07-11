@@ -20,6 +20,27 @@ public class AppSettings
     /// <summary>Relative speech rate. 0.5 = slow, 1.0 = normal, 1.5 = fast.</summary>
     public double SpeechRate { get; set; } = 1.0;
 
+    /// <summary>
+    /// Playback volume as a percentage. 100 = normal, values above 100 amplify
+    /// (louder than the source). Range 0-200. Defaults to 130 so speech is
+    /// comfortably audible out of the box.
+    /// </summary>
+    public int Volume { get; set; } = 130;
+
     /// <summary>User-defined regex filter rules.</summary>
     public List<FilterRule> FilterRules { get; set; } = new();
+
+    /// <summary>
+    /// App display-names the user has chosen NOT to have read aloud. Any app not
+    /// in this list is read (subject to the filter rules). Populated from the
+    /// "Apps" tab in Settings.
+    /// </summary>
+    public List<string> MutedApps { get; set; } = new();
+
+    /// <summary>
+    /// App display-names seen so far (i.e. apps that have sent a notification while
+    /// the app was running). Used to populate the per-app list in Settings so the
+    /// user can pick which ones to mute.
+    /// </summary>
+    public List<string> KnownApps { get; set; } = new();
 }

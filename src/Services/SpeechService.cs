@@ -3,10 +3,10 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Media;
 using System.Threading;
 using System.Threading.Tasks;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using NotificationReader.Models;
 using Windows.Media.SpeechSynthesis;
 
@@ -46,6 +46,8 @@ public class SpeechService : IDisposable
 
     private VoiceOption? _currentVoice;
     private double _rate = 1.0;
+    // Playback gain multiplier. 1.0 = source volume; >1.0 amplifies (louder).
+    private float _gain = 1.3f;
     private bool _disposed;
 
     /// <summary>Master toggle mirrored from settings.</summary>
@@ -172,6 +174,17 @@ public class SpeechService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Sets the playback volume as a percentage (0-200). 100 = source volume;
+    /// above 100 amplifies so speech can be made louder than the raw audio.
+    /// </summary>
+    public void SetVolume(int percent)
+    {
+        if (percent < 0) percent = 0;
+        if (percent > 200) percent = 200;
+        _gain = percent / 100f;
+    }
+
     /// <summary>Converts the app rate (0.5-1.5) into an SSML prosody rate like "+0%".</summary>
     private string OnlineRateString()
     {
@@ -282,8 +295,10 @@ public class SpeechService : IDisposable
             await netStream.CopyToAsync(memory).ConfigureAwait(false);
             memory.Position = 0;
 
-            using var player = new SoundPlayer(memory);
-            player.PlaySync();
+            // The WinRT stream is WAV; play through NAudio so the volume slider
+            // (which can amplify beyond 100%) applies to local voices too.
+            using var reader = new WaveFileReader(memory);
+            PlayWithGain(reader, _gain);
         }
         catch (Exception ex)
         {
@@ -292,12 +307,24 @@ public class SpeechService : IDisposable
     }
 
     /// <summary>Decodes and plays an MP3 byte array synchronously (via NAudio).</summary>
-    private static void PlayMp3(byte[] mp3)
+    private void PlayMp3(byte[] mp3)
     {
         using var ms = new MemoryStream(mp3);
         using var reader = new Mp3FileReader(ms);
+        PlayWithGain(reader, _gain);
+    }
+
+    /// <summary>
+    /// Plays a decoded audio stream synchronously, applying the gain multiplier
+    /// (values above 1.0 amplify, making output louder than the source).
+    /// </summary>
+    private static void PlayWithGain(WaveStream reader, float gain)
+    {
+        var sampleProvider = reader.ToSampleProvider();
+        var volumeProvider = new VolumeSampleProvider(sampleProvider) { Volume = gain };
+
         using var output = new WaveOutEvent();
-        output.Init(reader);
+        output.Init(volumeProvider);
         output.Play();
         while (output.PlaybackState == PlaybackState.Playing)
         {

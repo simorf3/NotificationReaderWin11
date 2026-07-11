@@ -147,6 +147,15 @@ public class NotificationService : IDisposable
                 return;
             }
 
+            // Remember this app so the user can choose to mute it later in Settings.
+            RememberApp(appName);
+
+            // Per-app mute: if the user has switched this app off, don't read it.
+            if (IsAppMuted(appName))
+            {
+                return;
+            }
+
             // Filtering still sees the app name and the complete text so filter
             // rules keyed on either keep working.
             if (!_filterService.ShouldSpeak(appName, fullText))
@@ -164,6 +173,42 @@ public class NotificationService : IDisposable
         {
             Logger.Log("Error handling notification.", ex);
         }
+    }
+
+    /// <summary>True if the user has muted this app (case-insensitive).</summary>
+    private bool IsAppMuted(string appName)
+    {
+        if (string.IsNullOrWhiteSpace(appName))
+        {
+            return false;
+        }
+
+        var muted = _settingsService.Settings.MutedApps;
+        return muted != null &&
+               muted.Any(a => string.Equals(a, appName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Records an app the first time it sends a notification, so it appears in the
+    /// per-app list in Settings. Persists in the background only when a genuinely
+    /// new app is seen (to avoid frequent disk writes).
+    /// </summary>
+    private void RememberApp(string appName)
+    {
+        if (string.IsNullOrWhiteSpace(appName))
+        {
+            return;
+        }
+
+        var known = _settingsService.Settings.KnownApps ??= new System.Collections.Generic.List<string>();
+        if (known.Any(a => string.Equals(a, appName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        known.Add(appName);
+        // Fire-and-forget save; failures are logged inside SaveAsync.
+        _ = _settingsService.SaveAsync();
     }
 
     private static System.Collections.Generic.List<string> ExtractTextParts(UserNotification notification)

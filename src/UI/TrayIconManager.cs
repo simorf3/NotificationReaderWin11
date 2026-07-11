@@ -32,6 +32,10 @@ public class TrayIconManager : IDisposable
     private ToolStripMenuItem? _rateNormal;
     private ToolStripMenuItem? _rateFast;
 
+    private ToolStripMenuItem? _volumeMenu;
+    private ToolStripMenuItem? _volumeLabel;
+    private TrackBar? _volumeTrackBar;
+
     private SettingsWindow? _settingsWindow;
     private bool _disposed;
 
@@ -78,6 +82,11 @@ public class TrayIconManager : IDisposable
         _rateMenu.DropDownItems.Add(_rateFast);
         UpdateRateMenu();
         _menu.Items.Add(_rateMenu);
+
+        // Volume submenu (slider)
+        _volumeMenu = new ToolStripMenuItem("Volume");
+        BuildVolumeMenu();
+        _menu.Items.Add(_volumeMenu);
 
         _menu.Items.Add(new ToolStripSeparator());
 
@@ -229,6 +238,70 @@ public class TrayIconManager : IDisposable
         _speechService.SetRate(rate);
         _settingsService.Settings.SpeechRate = rate;
         UpdateRateMenu();
+        await _settingsService.SaveAsync();
+    }
+
+    private void BuildVolumeMenu()
+    {
+        if (_volumeMenu == null)
+        {
+            return;
+        }
+
+        _volumeMenu.DropDownItems.Clear();
+
+        int vol = _settingsService.Settings.Volume;
+        if (vol < 0) vol = 0;
+        if (vol > 200) vol = 200;
+
+        _volumeLabel = new ToolStripMenuItem($"Volume: {vol}%  (100% = normal)") { Enabled = false };
+        _volumeMenu.DropDownItems.Add(_volumeLabel);
+
+        _volumeTrackBar = new TrackBar
+        {
+            Minimum = 0,
+            Maximum = 200,
+            TickFrequency = 25,
+            SmallChange = 5,
+            LargeChange = 25,
+            Value = vol,
+            Width = 240,
+            AutoSize = false,
+            TickStyle = TickStyle.BottomRight
+        };
+        // Live feedback while dragging; persist when the drag/keys finish.
+        _volumeTrackBar.ValueChanged += OnVolumeChanged;
+        _volumeTrackBar.MouseUp += (_, _) => SaveVolume();
+        _volumeTrackBar.KeyUp += (_, _) => SaveVolume();
+
+        var host = new ToolStripControlHost(_volumeTrackBar)
+        {
+            AutoSize = false,
+            Width = 250,
+            Padding = new Padding(6, 2, 6, 2)
+        };
+        _volumeMenu.DropDownItems.Add(host);
+    }
+
+    private void OnVolumeChanged(object? sender, EventArgs e)
+    {
+        if (sender is not TrackBar tb)
+        {
+            return;
+        }
+
+        int vol = tb.Value;
+        if (_volumeLabel != null)
+        {
+            _volumeLabel.Text = $"Volume: {vol}%  (100% = normal)";
+        }
+        // Apply immediately so the next spoken notification uses the new level.
+        _speechService.SetVolume(vol);
+        _settingsService.Settings.Volume = vol;
+    }
+
+    private async void SaveVolume()
+    {
         await _settingsService.SaveAsync();
     }
 
