@@ -113,10 +113,16 @@ public class TrayIconManager : IDisposable
         {
             Icon = LoadAppIcon(),
             Visible = true,
+            // Assigning the strip gives us native right-click behaviour AND gives
+            // the reflection-based ShowContextMenu (used for left-click) something
+            // to show. Without this, neither click shows anything.
+            ContextMenuStrip = _menu,
             Text = BuildTooltip()
         };
-        // Left-click (or right-click) opens the menu.
-        _notifyIcon.MouseClick += OnTrayIconClick;
+        // Left-click also opens the menu (right-click is handled natively via
+        // ContextMenuStrip above, so we only need to trigger it for left-click).
+        // MouseUp is the reliable event for NotifyIcon click handling.
+        _notifyIcon.MouseUp += OnTrayIconClick;
         _notifyIcon.DoubleClick += (_, _) => OpenSettingsWindow();
 
         // Startup balloon.
@@ -443,6 +449,9 @@ public class TrayIconManager : IDisposable
         }
     }
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
     private void OnTrayIconClick(object? sender, MouseEventArgs e)
     {
         if (_menu == null || _notifyIcon == null)
@@ -450,14 +459,32 @@ public class TrayIconManager : IDisposable
             return;
         }
 
-        // Show menu on left-click or right-click (both are fine for a tray-only app).
-        if (e.Button == MouseButtons.Left || e.Button == MouseButtons.Right)
+        // Right-click is already handled natively by ContextMenuStrip; only trigger
+        // the menu ourselves for left-click so it doesn't open twice.
+        if (e.Button != MouseButtons.Left)
         {
-            // Position the menu at the cursor; MethodInfo reflection is the standard
-            // workaround for showing a ContextMenuStrip manually.
-            var mi = typeof(NotifyIcon).GetMethod("ShowContextMenu",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            mi?.Invoke(_notifyIcon, null);
+            return;
+        }
+
+        // Ensure the menu takes foreground so it dismisses when clicking elsewhere.
+        if (_menu.Handle != IntPtr.Zero)
+        {
+            SetForegroundWindow(_menu.Handle);
+        }
+
+        // NotifyIcon.ShowContextMenu is private; invoking it (with ContextMenuStrip
+        // assigned) shows the menu at the cursor with correct positioning/behaviour.
+        var mi = typeof(NotifyIcon).GetMethod("ShowContextMenu",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        if (mi != null)
+        {
+            mi.Invoke(_notifyIcon, null);
+        }
+        else
+        {
+            // Fallback if the internal method is ever renamed.
+            _menu.Show(System.Windows.Forms.Cursor.Position);
         }
     }
 
