@@ -126,29 +126,48 @@ public class TrayIconManager : IDisposable
 
         _voiceMenu.DropDownItems.Clear();
 
-        var voices = _speechService.NaturalVoices;
+        var voices = _speechService.Voices;
         if (voices.Count == 0)
         {
             _voiceMenu.DropDownItems.Add(new ToolStripMenuItem("(No voices found)") { Enabled = false });
             return;
         }
 
+        string? selected = _settingsService.Settings.SelectedVoiceId?.Length > 0
+            ? _settingsService.Settings.SelectedVoiceId
+            : _speechService.CurrentVoiceId;
+
+        bool addedOnlineHeader = false;
+        bool addedLocalHeader = false;
+
         foreach (var voice in voices)
         {
+            // Section headers so the AI (online) voices are clearly separated from the
+            // offline ones.
+            if (voice.IsOnline && !addedOnlineHeader)
+            {
+                _voiceMenu.DropDownItems.Add(new ToolStripMenuItem("Natural AI voices (need internet)") { Enabled = false });
+                addedOnlineHeader = true;
+            }
+            else if (!voice.IsOnline && !addedLocalHeader)
+            {
+                _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
+                _voiceMenu.DropDownItems.Add(new ToolStripMenuItem("Offline voices") { Enabled = false });
+                addedLocalHeader = true;
+            }
+
             var item = new ToolStripMenuItem(voice.DisplayName)
             {
                 Tag = voice.Id,
-                Checked = voice.Id == (_settingsService.Settings.SelectedVoiceId?.Length > 0
-                    ? _settingsService.Settings.SelectedVoiceId
-                    : _speechService.CurrentVoiceId)
+                Checked = voice.Id == selected
             };
             item.Click += OnVoiceClicked;
             _voiceMenu.DropDownItems.Add(item);
         }
 
-        // Let the user install more voices straight from Windows settings.
+        // Let the user install more offline voices straight from Windows settings.
         _voiceMenu.DropDownItems.Add(new ToolStripSeparator());
-        var addVoices = new ToolStripMenuItem("Add more voices\u2026");
+        var addVoices = new ToolStripMenuItem("Add more offline voices\u2026");
         addVoices.Click += (_, _) => OpenSpeechSettings();
         _voiceMenu.DropDownItems.Add(addVoices);
     }

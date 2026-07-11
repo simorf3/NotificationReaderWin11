@@ -6,17 +6,26 @@ using System.Linq;
 using System.Media;
 using System.Threading;
 using System.Threading.Tasks;
+using NAudio.Wave;
+using NotificationReader.Models;
 using Windows.Media.SpeechSynthesis;
 
 namespace NotificationReader.Services;
 
 /// <summary>
-/// Wraps the WinRT <see cref="SpeechSynthesizer"/>. Speech requests are queued
-/// and processed one at a time on a background task so they never overlap.
+/// Turns notification text into speech. Two voice sources are supported and presented as
+/// one unified list:
+///   * <b>Online neural</b> voices (the Microsoft Edge "natural" AI voices) via
+///     <see cref="EdgeTtsService"/> — high quality, need an internet connection.
+///   * <b>Local</b> voices via the WinRT <see cref="SpeechSynthesizer"/> — always work offline.
+///
+/// Requests are queued and processed one at a time on a background task so they never
+/// overlap. If an online voice fails (e.g. no internet), we transparently fall back to a
+/// local voice so notifications are still read aloud.
 /// </summary>
 public class SpeechService : IDisposable
 {
-    // Name fragments used by Microsoft's modern neural/natural voices on Windows 11.
+    // Name fragments used by Microsoft's modern neural/natural local voices on Windows 11.
     private static readonly string[] NaturalVoiceFragments =
     {
         "Natural", "Jenny", "Aria", "Guy", "Davis", "Ana", "Michelle",
@@ -31,49 +40,57 @@ public class SpeechService : IDisposable
     private CancellationTokenSource _cts = new();
     private Task? _worker;
 
+    // Maps a local VoiceOption.Id to its underlying WinRT voice.
+    private readonly Dictionary<string, VoiceInformation> _localVoices = new();
+    private VoiceInformation? _fallbackLocalVoice;
+
+    private VoiceOption? _currentVoice;
     private double _rate = 1.0;
     private bool _disposed;
 
     /// <summary>Master toggle mirrored from settings.</summary>
     public bool IsEnabled { get; set; } = true;
 
-    /// <summary>Voices considered "natural"/neural, or all voices as a fallback.</summary>
-    public IReadOnlyList<VoiceInformation> NaturalVoices { get; private set; } = Array.Empty<VoiceInformation>();
+    /// <summary>All selectable voices: online neural voices first, then local voices.</summary>
+    public IReadOnlyList<VoiceOption> Voices { get; private set; } = Array.Empty<VoiceOption>();
 
     /// <summary>The currently selected voice id, if any.</summary>
-    public string? CurrentVoiceId { get; private set; }
+    public string? CurrentVoiceId => _currentVoice?.Id;
 
     public Task InitializeAsync()
     {
         _synthesizer = new SpeechSynthesizer();
 
-        // Expose EVERY installed voice so the user can always pick one. Natural/
-        // neural voices are sorted to the top so they are easy to find, but the
-        // full list is always shown (previously a natural-only filter could hide
-        // voices, leaving nothing selectable).
-        //
-        // Note: Windows 11 "Narrator natural" voices use a separate neural engine
-        // that Microsoft does not expose through Windows.Media.SpeechSynthesis, so
-        // they cannot appear here regardless. To add more voices usable by this
-        // app, install them via Settings > Time & language > Speech > "Add voices".
-        var all = SpeechSynthesizer.AllVoices ?? (IReadOnlyList<VoiceInformation>)Array.Empty<VoiceInformation>();
-
-        NaturalVoices = all
+        // ---- Local (offline) voices -------------------------------------------------
+        var localWinRt = SpeechSynthesizer.AllVoices ?? (IReadOnlyList<VoiceInformation>)Array.Empty<VoiceInformation>();
+        var localOrdered = localWinRt
             .OrderByDescending(v => IsNatural(v.DisplayName))
             .ThenBy(v => v.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // Default to the best available voice: prefer a natural one, else the
-        // synthesizer's own default, else the first in the list.
-        var first = NaturalVoices.FirstOrDefault(v => IsNatural(v.DisplayName))
-                    ?? _synthesizer.Voice
-                    ?? NaturalVoices.FirstOrDefault();
-        if (first != null)
+        var localOptions = new List<VoiceOption>();
+        foreach (var v in localOrdered)
         {
-            _synthesizer.Voice = first;
-            CurrentVoiceId = first.Id;
+            _localVoices[v.Id] = v;
+            localOptions.Add(VoiceOption.Local(v.Id, v.DisplayName + "  (offline)"));
         }
 
+        // Best local voice to fall back to when an online voice can't be reached.
+        _fallbackLocalVoice = localOrdered.FirstOrDefault(v => IsNatural(v.DisplayName))
+                              ?? _synthesizer.Voice
+                              ?? localOrdered.FirstOrDefault();
+
+        // ---- Online neural (AI) voices ---------------------------------------------
+        var onlineOptions = OnlineVoiceCatalog.All();
+
+        // Unified list: AI voices first (that's what the user wants front-and-centre).
+        Voices = onlineOptions.Concat(localOptions).ToList();
+
+        // Default selection: the flagship online AI voice. Synthesis falls back to a
+        // local voice automatically if there's no internet, so this is safe.
+        _currentVoice = Voices.FirstOrDefault(v => v.IsOnline && v.OnlineShortName == OnlineVoiceCatalog.DefaultShortName)
+                        ?? Voices.FirstOrDefault();
+        ApplyLocalVoiceIfNeeded();
         ApplyRate();
 
         _cts = new CancellationTokenSource();
@@ -88,7 +105,7 @@ public class SpeechService : IDisposable
         NaturalVoiceFragments.Any(frag =>
             displayName.IndexOf(frag, StringComparison.OrdinalIgnoreCase) >= 0);
 
-    /// <summary>Selects a voice by its <see cref="VoiceInformation.Id"/>.</summary>
+    /// <summary>Selects a voice by its <see cref="VoiceOption.Id"/>.</summary>
     public void SetVoice(string voiceId)
     {
         if (string.IsNullOrWhiteSpace(voiceId))
@@ -96,25 +113,36 @@ public class SpeechService : IDisposable
             return;
         }
 
-        var voice = SpeechSynthesizer.AllVoices.FirstOrDefault(v => v.Id == voiceId);
-        if (voice != null)
+        var match = Voices.FirstOrDefault(v => v.Id == voiceId);
+        if (match == null)
+        {
+            return;
+        }
+
+        _currentVoice = match;
+        ApplyLocalVoiceIfNeeded();
+    }
+
+    private void ApplyLocalVoiceIfNeeded()
+    {
+        // For local voices, point the WinRT synthesizer at the selected voice now.
+        if (_currentVoice is { IsOnline: false } &&
+            _localVoices.TryGetValue(_currentVoice.Id, out var winRtVoice))
         {
             try
             {
-                _synthesizer.Voice = voice;
-                CurrentVoiceId = voice.Id;
+                _synthesizer.Voice = winRtVoice;
             }
             catch (Exception ex)
             {
-                Logger.Log($"Failed to set voice '{voiceId}'.", ex);
+                Logger.Log($"Failed to set local voice '{_currentVoice.Id}'.", ex);
             }
         }
     }
 
     /// <summary>
     /// Sets the relative speech rate. Input uses the app convention
-    /// (0.5 slow, 1.0 normal, 1.5 fast) and is mapped onto the WinRT
-    /// SpeakingRate range (0.5 - 6.0).
+    /// (0.5 slow, 1.0 normal, 1.5 fast).
     /// </summary>
     public void SetRate(double rate)
     {
@@ -142,6 +170,15 @@ public class SpeechService : IDisposable
         {
             Logger.Log("Failed to apply speaking rate.", ex);
         }
+    }
+
+    /// <summary>Converts the app rate (0.5-1.5) into an SSML prosody rate like "+0%".</summary>
+    private string OnlineRateString()
+    {
+        int pct = (int)Math.Round((_rate - 1.0) * 100.0);
+        if (pct > 100) pct = 100;
+        if (pct < -50) pct = -50;
+        return (pct >= 0 ? "+" : "") + pct + "%";
     }
 
     /// <summary>Queues text to be spoken.</summary>
@@ -176,19 +213,70 @@ public class SpeechService : IDisposable
                     break;
                 }
 
-                await SynthesizeAndPlayAsync(text).ConfigureAwait(false);
+                await SpeakAsync(text, token).ConfigureAwait(false);
             }
         }
     }
 
-    private async Task SynthesizeAndPlayAsync(string text)
+    private async Task SpeakAsync(string text, CancellationToken token)
+    {
+        var voice = _currentVoice;
+
+        // Online neural voice: synthesize over the network, then play the MP3. If anything
+        // goes wrong (no internet, endpoint error) fall back to a local voice.
+        if (voice is { IsOnline: true, OnlineShortName: { } shortName })
+        {
+            try
+            {
+                byte[] mp3 = await EdgeTtsService
+                    .SynthesizeAsync(text, shortName, OnlineRateString(), cancellationToken: token)
+                    .ConfigureAwait(false);
+
+                if (mp3.Length > 0)
+                {
+                    PlayMp3(mp3);
+                    return;
+                }
+
+                Logger.Log("Online voice returned no audio; falling back to a local voice.");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("Online voice failed (offline?); falling back to a local voice.", ex);
+            }
+
+            await SpeakWithLocalFallbackAsync(text).ConfigureAwait(false);
+            return;
+        }
+
+        // Local (offline) voice.
+        await SpeakLocalAsync(text).ConfigureAwait(false);
+    }
+
+    private async Task SpeakWithLocalFallbackAsync(string text)
+    {
+        try
+        {
+            if (_fallbackLocalVoice != null)
+            {
+                _synthesizer.Voice = _fallbackLocalVoice;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Log("Failed to select fallback local voice.", ex);
+        }
+
+        await SpeakLocalAsync(text).ConfigureAwait(false);
+    }
+
+    private async Task SpeakLocalAsync(string text)
     {
         try
         {
             using SpeechSynthesisStream stream =
                 await _synthesizer.SynthesizeTextToStreamAsync(text);
 
-            // Copy the WinRT stream into a managed MemoryStream for SoundPlayer.
             using var netStream = stream.AsStreamForRead();
             using var memory = new MemoryStream();
             await netStream.CopyToAsync(memory).ConfigureAwait(false);
@@ -199,7 +287,21 @@ public class SpeechService : IDisposable
         }
         catch (Exception ex)
         {
-            Logger.Log("Failed to synthesize/play speech.", ex);
+            Logger.Log("Failed to synthesize/play local speech.", ex);
+        }
+    }
+
+    /// <summary>Decodes and plays an MP3 byte array synchronously (via NAudio).</summary>
+    private static void PlayMp3(byte[] mp3)
+    {
+        using var ms = new MemoryStream(mp3);
+        using var reader = new Mp3FileReader(ms);
+        using var output = new WaveOutEvent();
+        output.Init(reader);
+        output.Play();
+        while (output.PlaybackState == PlaybackState.Playing)
+        {
+            Thread.Sleep(40);
         }
     }
 
