@@ -139,19 +139,22 @@ public class NotificationService : IDisposable
                 Logger.Log("Failed to read notification app name.", ex);
             }
 
-            string textContent = ExtractText(notification);
+            var textParts = ExtractTextParts(notification);
+            string fullText = string.Join(". ", textParts);
 
-            if (string.IsNullOrWhiteSpace(textContent) && string.IsNullOrWhiteSpace(appName))
+            if (string.IsNullOrWhiteSpace(fullText) && string.IsNullOrWhiteSpace(appName))
             {
                 return;
             }
 
-            if (!_filterService.ShouldSpeak(appName, textContent))
+            // Filtering still sees the app name and the complete text so filter
+            // rules keyed on either keep working.
+            if (!_filterService.ShouldSpeak(appName, fullText))
             {
                 return;
             }
 
-            string speech = BuildSpeechString(appName, textContent);
+            string speech = BuildSpokenText(appName, textParts);
             if (!string.IsNullOrWhiteSpace(speech))
             {
                 _speechService.Enqueue(speech);
@@ -163,14 +166,15 @@ public class NotificationService : IDisposable
         }
     }
 
-    private static string ExtractText(UserNotification notification)
+    private static System.Collections.Generic.List<string> ExtractTextParts(UserNotification notification)
     {
+        var result = new System.Collections.Generic.List<string>();
         try
         {
             NotificationVisual? visual = notification.Notification?.Visual;
             if (visual == null)
             {
-                return string.Empty;
+                return result;
             }
 
             // Prefer the standard ToastGeneric binding; fall back to the first
@@ -187,12 +191,11 @@ public class NotificationService : IDisposable
 
             if (binding != null)
             {
-                var parts = binding.GetTextElements()
+                result = binding.GetTextElements()
                     .Select(t => t.Text)
                     .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .Select(s => s.Trim());
-
-                return string.Join(". ", parts);
+                    .Select(s => s.Trim())
+                    .ToList();
             }
         }
         catch (Exception ex)
@@ -200,20 +203,47 @@ public class NotificationService : IDisposable
             Logger.Log("Failed to extract notification text.", ex);
         }
 
-        return string.Empty;
+        return result;
     }
 
-    private static string BuildSpeechString(string appName, string textContent)
+    /// <summary>
+    /// Builds the text that is actually spoken from a notification's text elements.
+    ///
+    /// Two deliberate choices:
+    ///   * The <b>app name is never spoken</b> — the user can tell which app it is from
+    ///     the message itself, so announcing "WhatsApp:" / "Outlook:" every time is noise.
+    ///   * For <b>WhatsApp group chats</b>, the group name is skipped. A WhatsApp toast is
+    ///     laid out as [conversation title, message body]. In a group the body is prefixed
+    ///     with the sender ("Sender: message"), so the sender is already spoken and the
+    ///     group name in the title is redundant — we drop it. In a one-to-one chat the body
+    ///     has no sender prefix, so the title (the contact's name) is kept so you still know
+    ///     who messaged.
+    ///
+    /// Limitation: a one-to-one message whose text itself starts with "short phrase: " can
+    /// be misread as a group message (dropping the contact name). This is uncommon.
+    /// </summary>
+    private static string BuildSpokenText(string appName, System.Collections.Generic.List<string> parts)
     {
-        if (string.IsNullOrWhiteSpace(appName))
+        if (parts.Count == 0)
         {
-            return textContent;
+            return string.Empty;
         }
-        if (string.IsNullOrWhiteSpace(textContent))
+
+        bool isWhatsApp = appName.IndexOf("whatsapp", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        if (isWhatsApp && parts.Count >= 2)
         {
-            return appName;
+            string body = parts[1];
+            bool looksLikeGroup = System.Text.RegularExpressions.Regex.IsMatch(
+                body, @"^[^:\r\n]{1,40}:\s");
+            if (looksLikeGroup)
+            {
+                // Skip the group-name title; speak the sender-prefixed body (and any rest).
+                return string.Join(". ", parts.Skip(1));
+            }
         }
-        return $"{appName}: {textContent}";
+
+        return string.Join(". ", parts);
     }
 
     public void Dispose()
